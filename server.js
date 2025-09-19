@@ -1,26 +1,23 @@
 require("dotenv").config();
 const express = require("express");
-const bodyParser = require("body-parser");
 const fetch = require("node-fetch");
 const { Client, GatewayIntentBits } = require("discord.js");
 
 const app = express();
-app.use(bodyParser.urlencoded({ extended: true }));
 
-// ====== CONFIG FROM ENV ======
+// ====== CONFIG ======
 const TOKEN = process.env.BOT_TOKEN;
-const GUILD_ID = process.env.GUILD_ID;
-const VTC_MEMBER_ROLE = process.env.VTC_MEMBER_ROLE;
-const WITHOUT_VTC_ROLE = process.env.WITHOUT_VTC_ROLE;
-const VTC_ID = process.env.VTC_ID || "81586";
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const BASE_URL = process.env.BASE_URL; // e.g. https://your-app.up.railway.app
-const SERVER_INVITE = process.env.SERVER_INVITE || "https://discord.gg/yourserver"; // fallback invite
-// ==============================
+const REDIRECT_URI = process.env.REDIRECT_URI || "http://localhost:3000/linked-role/callback";
+const GUILD_ID = process.env.GUILD_ID;
+const VTC_ID = process.env.VTC_ID || "81586";
+const VTC_MEMBER_ROLE = process.env.VTC_MEMBER_ROLE;
+const WITHOUT_VTC_ROLE = process.env.WITHOUT_VTC_ROLE;
+// =====================
 
-if (!TOKEN || !GUILD_ID || !VTC_MEMBER_ROLE || !WITHOUT_VTC_ROLE) {
-  console.error("❌ Missing .env values. Check BOT_TOKEN, GUILD_ID, VTC_MEMBER_ROLE, WITHOUT_VTC_ROLE.");
+if (!TOKEN || !CLIENT_ID || !CLIENT_SECRET || !GUILD_ID || !VTC_MEMBER_ROLE || !WITHOUT_VTC_ROLE) {
+  console.error("❌ Missing .env values. Check your .env file.");
   process.exit(1);
 }
 
@@ -28,69 +25,112 @@ if (!TOKEN || !GUILD_ID || !VTC_MEMBER_ROLE || !WITHOUT_VTC_ROLE) {
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
-
-client.once("ready", () => {
-  console.log(`✅ Bot logged in as ${client.user.tag}`);
-});
-
+client.once("ready", () => console.log(`✅ Bot logged in as ${client.user.tag}`));
 client.login(TOKEN);
 
-// Homepage (simple form for manual linking)
+// =====================
+// Homepage
+// =====================
 app.get("/", (req, res) => {
   res.send(`
     <h2>TruckersMP VTC Role Bot</h2>
-    <p><a href="/linked-role">Go to Linked Role Verification</a></p>
-    <form method="POST" action="/link">
-      <label>Discord ID: <input name="discordId" required></label><br><br>
-      <label>TruckersMP ID: <input name="tmpId" required></label><br><br>
-      <button type="submit">Link</button>
-    </form>
+    <p><a href="/linked-role">Start Linked Role Verification</a></p>
   `);
 });
 
-// Link handler
-app.post("/link", async (req, res) => {
-  const discordId = req.body.discordId.trim();
-  const tmpId = Number(req.body.tmpId.trim());
+// =====================
+// Step 1: Redirect to Discord OAuth2
+// =====================
+app.get("/linked-role", (req, res) => {
+  const url = `https://discord.com/oauth2/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(
+    REDIRECT_URI
+  )}&scope=identify+role_connections.write`;
+
+  res.redirect(url);
+});
+
+// =====================
+// Step 2: Handle Discord OAuth2 callback
+// =====================
+app.get("/linked-role/callback", async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.send("❌ No OAuth2 code provided.");
 
   try {
-    const url = `https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`;
-    const response = await fetch(url);
+    // Exchange code for token
+    const tokenResponse = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI,
+      }),
+    });
 
-    if (!response.ok) {
-      throw new Error(`TruckersMP API error: ${response.status} ${response.statusText}`);
+    const tokenData = await tokenResponse.json();
+    if (!tokenData.access_token) {
+      return res.send("❌ Failed to get Discord access token: " + JSON.stringify(tokenData));
     }
 
-    let data;
-    try {
-      data = await response.json();
-    } catch (e) {
-      const text = await response.text();
-      throw new Error(`Invalid JSON from TMP API. First part: ${text.slice(0, 200)}`);
-    }
+    // Get Discord user
+    const userRes = await fetch("https://discord.com/api/users/@me", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const user = await userRes.json();
 
-    const members = data?.response?.members || [];
-    const inVtc = members.some(m => Number(m.user_id) === tmpId);
+    // ---- Check TruckersMP VTC ----
+    const tmpRes = await fetch(`https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`);
+    const tmpData = await tmpRes.json();
+    const inVtc = tmpData?.response?.members?.some(m => String(m.user_id) === String(user.id));
 
-    // Fetch Discord user
+    // ---- Update Linked Role Metadata ----
+    const metadata = {
+      in_vtc: inVtc ? 1 : 0,
+    };
+
+    await fetch(`https://discord.com/api/users/@me/applications/${CLIENT_ID}/role-connection`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        platform_name: "TruckersMP",
+        platform_username: user.username,
+        metadata,
+      }),
+    });
+
+    // ---- Assign Discord role ----
     const guild = await client.guilds.fetch(GUILD_ID);
-    const member = await guild.members.fetch(discordId);
+    const member = await guild.members.fetch(user.id).catch(() => null);
 
-    if (inVtc) {
-      await member.roles.add(VTC_MEMBER_ROLE);
-      await member.roles.remove(WITHOUT_VTC_ROLE).catch(() => {});
-      res.send(`✅ ${member.user.tag} is in VTC ${VTC_ID} → VTC Member role added.`);
-    } else {
-      await member.roles.add(WITHOUT_VTC_ROLE);
-      await member.roles.remove(VTC_MEMBER_ROLE).catch(() => {});
-      res.send(`ℹ️ ${member.user.tag} is NOT in VTC ${VTC_ID} → Without VTC role added.`);
+    if (member) {
+      if (inVtc) {
+        await member.roles.add(VTC_MEMBER_ROLE).catch(() => {});
+        await member.roles.remove(WITHOUT_VTC_ROLE).catch(() => {});
+      } else {
+        await member.roles.add(WITHOUT_VTC_ROLE).catch(() => {});
+        await member.roles.remove(VTC_MEMBER_ROLE).catch(() => {});
+      }
     }
+
+    res.send(
+      `<h2>✅ Linked Role Complete</h2><p>Hello, ${user.username}! You are ${
+        inVtc ? "in the VTC 🎉" : "NOT in the VTC 🚫"
+      }.</p>`
+    );
   } catch (err) {
-    console.error("❌ Error:", err.message);
+    console.error("❌ Error in OAuth2 flow:", err);
     res.send("❌ Error: " + err.message);
   }
 });
 
-// Start web server
+// =====================
+// Start server
+// =====================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🌍 Web server running on port ${PORT}`));
