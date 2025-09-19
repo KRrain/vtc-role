@@ -1,3 +1,9 @@
+console.log("ENV CHECK:", {
+  BOT_TOKEN: !!process.env.BOT_TOKEN,
+  CLIENT_ID: process.env.CLIENT_ID,
+  CLIENT_SECRET: process.env.CLIENT_SECRET ? "✅ set" : "❌ missing",
+});
+
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
