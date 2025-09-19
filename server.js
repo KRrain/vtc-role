@@ -9,12 +9,12 @@ const app = express();
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const BASE_URL = process.env.BASE_URL; // e.g. https://your-app.up.railway.app
+const BASE_URL = process.env.BASE_URL; // e.g. https://vtc-role-production.up.railway.app
 const GUILD_ID = process.env.GUILD_ID;
 const VTC_ID = process.env.VTC_ID || "81586";
 // =======================
 
-// Discord client
+// Discord client (only needed if you also want to assign roles in server)
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
@@ -22,7 +22,6 @@ const client = new Client({
 client.once("ready", () => {
   console.log(`✅ Bot logged in as ${client.user.tag}`);
 });
-
 client.login(BOT_TOKEN);
 
 // ---------- ROUTES ----------
@@ -36,7 +35,7 @@ app.get("/", (req, res) => {
 app.get("/linked-role", (req, res) => {
   const url = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(
     BASE_URL + "/linked-role/callback"
-  )}&response_type=code&scope=role_connections.write identify`;
+  )}&response_type=code&scope=role_connections.write%20identify`;
   res.redirect(url);
 });
 
@@ -98,7 +97,7 @@ app.get("/linked-role/callback", async (req, res) => {
     if (metadataResp.ok) {
       res.send(
         `✅ Linked roles updated! ${user.username} is ${
-          inVtc ? "in VTC" : "NOT in VTC"
+          inVtc ? "in VTC ✅" : "NOT in VTC ❌"
         }.`
       );
     } else {
@@ -112,8 +111,8 @@ app.get("/linked-role/callback", async (req, res) => {
   }
 });
 
-// Start server
+// ---------- START SERVER ----------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
+app.listen(PORT, "0.0.0.0", () =>
   console.log(`🌍 Web server running on http://localhost:${PORT}`)
 );
