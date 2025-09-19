@@ -1,26 +1,20 @@
 require("dotenv").config();
 const express = require("express");
-const bodyParser = require("body-parser");
 const fetch = require("node-fetch");
 const { Client, GatewayIntentBits } = require("discord.js");
 
 const app = express();
-app.use(bodyParser.urlencoded({ extended: true }));
 
-// ====== CONFIG FROM ENV ======
-const TOKEN = process.env.BOT_TOKEN;
+// ===== ENV CONFIG =====
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const BASE_URL = process.env.BASE_URL; // e.g. https://vtc-role-production.up.railway.app
 const GUILD_ID = process.env.GUILD_ID;
-const VTC_MEMBER_ROLE = process.env.VTC_MEMBER_ROLE;
-const WITHOUT_VTC_ROLE = process.env.WITHOUT_VTC_ROLE;
 const VTC_ID = process.env.VTC_ID || "81586";
-// ==============================
+// =======================
 
-if (!TOKEN || !GUILD_ID || !VTC_MEMBER_ROLE || !WITHOUT_VTC_ROLE) {
-  console.error("❌ Missing .env values. Check BOT_TOKEN, GUILD_ID, VTC_MEMBER_ROLE, WITHOUT_VTC_ROLE.");
-  process.exit(1);
-}
-
-// Discord client
+// Discord client (only needed if you also want to assign roles in server)
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
@@ -28,72 +22,88 @@ const client = new Client({
 client.once("ready", () => {
   console.log(`✅ Bot logged in as ${client.user.tag}`);
 });
+client.login(BOT_TOKEN);
 
-client.login(TOKEN);
+// ---------- ROUTES ----------
 
-// Homepage
+// 1. Homepage
 app.get("/", (req, res) => {
-  res.send(`
-    <h2>TruckersMP VTC Role Bot</h2>
-    <form method="POST" action="/link">
-      <label>Discord ID: <input name="discordId" required></label><br><br>
-      <label>TruckersMP ID: <input name="tmpId" required></label><br><br>
-      <button type="submit">Link</button>
-    </form>
-    <br>
-    <p>Or try: <a href="/linked-role">Linked Role page</a></p>
-  `);
+  res.send(`<a href="/linked-role">🔗 Link your role</a>`);
 });
 
-// Linked Role placeholder
+// 2. Start Linked Role OAuth
 app.get("/linked-role", (req, res) => {
-  res.send(`
-    <h2>TruckersMP Linked Role</h2>
-    <p>This is a placeholder page. Your bot does not have Linked Role metadata enabled in Developer Portal.</p>
-    <p>Use the form on <a href="/">homepage</a> to verify your TMP account and get roles.</p>
-  `);
+  const url = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(
+    BASE_URL + "/linked-role/callback"
+  )}&response_type=code&scope=role_connections.write%20identify`;
+  res.redirect(url);
 });
 
-// Link handler
-app.post("/link", async (req, res) => {
-  const discordId = req.body.discordId.trim();
-  const tmpId = Number(req.body.tmpId.trim());
+// 3. Callback after user authorizes
+app.get("/linked-role/callback", async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.send("❌ No code received");
 
   try {
-    // Fetch VTC members safely
-    const response = await fetch(`https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`, {
-      headers: { "User-Agent": "DiscordBot (your-email@example.com)" }
+    // Exchange code for access token
+    const tokenResp = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: BASE_URL + "/linked-role/callback",
+      }),
     });
-
-    if (!response.ok) {
-      throw new Error(`TruckersMP API error: ${response.status} ${response.statusText}`);
+    const tokenData = await tokenResp.json();
+    if (!tokenData.access_token) {
+      console.error(tokenData);
+      return res.send("❌ Failed to exchange code for token");
     }
 
-    const text = await response.text();
+    // Get user info
+    const userResp = await fetch("https://discord.com/api/users/@me", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const user = await userResp.json();
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      console.error("❌ Invalid JSON from TruckersMP:", text.slice(0, 200));
-      throw new Error("TruckersMP API did not return valid JSON");
-    }
+    // Check TruckersMP VTC
+    const vtcResp = await fetch(
+      `https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`
+    );
+    const vtcData = await vtcResp.json();
+    const members = vtcData.response?.members || [];
+    const inVtc = members.some((m) => String(m.user_id) === String(user.id));
 
-    const members = data.response?.members || [];
-    const inVtc = members.some(m => Number(m.user_id) === tmpId);
+    // Update Discord Linked Role metadata
+    const metadataResp = await fetch(
+      `https://discord.com/api/users/@me/applications/${CLIENT_ID}/role-connection`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          platform_name: "TruckersMP",
+          platform_username: user.username,
+          metadata: { in_vtc: inVtc ? 1 : 0 },
+        }),
+      }
+    );
 
-    // Fetch Discord user
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const member = await guild.members.fetch(discordId);
-
-    if (inVtc) {
-      await member.roles.add(VTC_MEMBER_ROLE);
-      await member.roles.remove(WITHOUT_VTC_ROLE).catch(() => {});
-      res.send(`✅ ${member.user.tag} is in the VTC → VTC Member role added.`);
+    if (metadataResp.ok) {
+      res.send(
+        `✅ Linked roles updated! ${user.username} is ${
+          inVtc ? "in VTC ✅" : "NOT in VTC ❌"
+        }.`
+      );
     } else {
-      await member.roles.add(WITHOUT_VTC_ROLE);
-      await member.roles.remove(VTC_MEMBER_ROLE).catch(() => {});
-      res.send(`ℹ️ ${member.user.tag} is NOT in VTC ${VTC_ID} → Without VTC Members role added.`);
+      const err = await metadataResp.text();
+      console.error(err);
+      res.send("❌ Failed to update metadata: " + err);
     }
   } catch (err) {
     console.error(err);
@@ -101,6 +111,8 @@ app.post("/link", async (req, res) => {
   }
 });
 
-// Start web server
+// ---------- START SERVER ----------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌍 Web server running on port ${PORT}`));
+app.listen(PORT, "0.0.0.0", () =>
+  console.log(`🌍 Web server running on http://localhost:${PORT}`)
+);
