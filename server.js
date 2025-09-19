@@ -71,7 +71,7 @@ app.get("/linked-role/callback", async (req, res) => {
 
     // Check TruckersMP VTC
     const vtcResp = await fetch(
-      `https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`
+      `https://api.truckersmp.com/v2/vtc/${81586}/members`
     );
     const vtcData = await vtcResp.json();
     const members = vtcData.response?.members || [];
