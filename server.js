@@ -31,27 +31,17 @@ client.once("ready", () => {
 
 client.login(TOKEN);
 
-// Homepage
+// 1. Homepage
 app.get("/", (req, res) => {
-  res.send(`
-    <h2>TruckersMP VTC Role Bot</h2>
-    <form method="POST" action="/link">
-      <label>Discord ID: <input name="discordId" required></label><br><br>
-      <label>TruckersMP ID: <input name="tmpId" required></label><br><br>
-      <button type="submit">Link</button>
-    </form>
-    <br>
-    <p>Or try: <a href="/linked-role">Linked Role page</a></p>
-  `);
+  res.send(`<a href="/linked-role">🔗 Link your role</a>`);
 });
 
-// Linked Role placeholder
+// 2. Start Linked Role OAuth
 app.get("/linked-role", (req, res) => {
-  res.send(`
-    <h2>TruckersMP Linked Role</h2>
-    <p>This is a placeholder page. Your bot does not have Linked Role metadata enabled in Developer Portal.</p>
-    <p>Use the form on <a href="/">homepage</a> to verify your TMP account and get roles.</p>
-  `);
+  const url = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(
+    BASE_URL + "/linked-role/callback"
+  )}&response_type=code&scope=role_connections.write%20identify`;
+  res.redirect(url);
 });
 
 // Link handler
