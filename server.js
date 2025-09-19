@@ -154,7 +154,7 @@ app.get("/callback", async (req, res) => {
     const userData = await userResp.json();
 
     // Check TruckersMP membership
-    const vtcResp = await fetch(`https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`);
+    const vtcResp = await fetch(`https://api.truckersmp.com/v2/vtc/81586/members`);
     const vtcData = await vtcResp.json();
     const members = vtcData.response?.members || [];
     const inVtc = members.some(m => Number(m.user_id) === Number(userData.id));
