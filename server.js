@@ -35,10 +35,11 @@ client.once("ready", () => {
 
 client.login(TOKEN);
 
-// Homepage (simple form)
+// Homepage (simple form for manual linking)
 app.get("/", (req, res) => {
   res.send(`
     <h2>TruckersMP VTC Role Bot</h2>
+    <p><a href="/linked-role">Go to Linked Role Verification</a></p>
     <form method="POST" action="/link">
       <label>Discord ID: <input name="discordId" required></label><br><br>
       <label>TruckersMP ID: <input name="tmpId" required></label><br><br>
