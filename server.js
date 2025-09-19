@@ -1,9 +1,3 @@
-console.log("ENV CHECK:", {
-  BOT_TOKEN: !!process.env.BOT_TOKEN,
-  CLIENT_ID: process.env.CLIENT_ID,
-  CLIENT_SECRET: process.env.CLIENT_SECRET ? "✅ set" : "❌ missing",
-});
-
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -41,165 +35,10 @@ client.once("ready", () => {
 
 client.login(TOKEN);
 
-// ====== LINKED ROLES ENDPOINTS ======
-
-// Metadata schema for Discord Linked Roles
-app.get("/metadata", (req, res) => {
-  res.json([
-    {
-      key: "in_vtc",
-      name: "In TruckersMP VTC",
-      description: "Whether the user is in the VTC",
-      type: 7, // BOOLEAN
-    },
-  ]);
-});
-
-// Entry page for verification
-app.get("/linked-role", (req, res) => {
-  const redirect = encodeURIComponent(`${BASE_URL}/callback`);
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8">
-        <title>VTC Verification</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            background-color: #2c2f33;
-            color: #ffffff;
-            text-align: center;
-            padding: 50px;
-          }
-          .container {
-            background: #23272a;
-            padding: 40px;
-            border-radius: 12px;
-            display: inline-block;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-          }
-          h2 {
-            margin-bottom: 20px;
-          }
-          .discord-btn {
-            display: inline-block;
-            background-color: #5865F2;
-            color: #fff;
-            font-size: 16px;
-            font-weight: bold;
-            padding: 12px 24px;
-            border-radius: 8px;
-            text-decoration: none;
-            transition: background 0.3s ease;
-          }
-          .discord-btn:hover {
-            background-color: #4752c4;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <h2>TruckersMP VTC Verification</h2>
-          <p>Click below to log in with Discord and verify your membership.</p>
-          <a class="discord-btn" href="https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${redirect}&response_type=code&scope=identify">
-            Login with Discord
-          </a>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
-// OAuth2 callback with styled response
-app.get("/callback", async (req, res) => {
-  const code = req.query.code;
-  if (!code) {
-    return res.send(`
-      <html><body style="background:#2c2f33;color:white;text-align:center;padding:50px;">
-        <h2>❌ Verification Failed</h2>
-        <p>Missing <code>?code</code> parameter.</p>
-      </body></html>
-    `);
-  }
-
-  try {
-    // Exchange code for token
-    const tokenResp = await fetch("https://discord.com/api/oauth2/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: `${BASE_URL}/callback`,
-      }),
-    });
-
-    const tokenData = await tokenResp.json();
-    if (tokenData.error) {
-      return res.send(`
-        <html><body style="background:#2c2f33;color:white;text-align:center;padding:50px;">
-          <h2>❌ OAuth2 Error</h2>
-          <p>${tokenData.error_description}</p>
-        </body></html>
-      `);
-    }
-
-    // Get user info
-    const userResp = await fetch("https://discord.com/api/users/@me", {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
-    });
-    const userData = await userResp.json();
-
-    // Check TruckersMP membership
-    const vtcResp = await fetch(`https://api.truckersmp.com/v2/vtc/81586/members`);
-    const vtcData = await vtcResp.json();
-    const members = vtcData.response?.members || [];
-    const inVtc = members.some(m => Number(m.user_id) === Number(userData.id));
-
-    // Update Discord roles
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const member = await guild.members.fetch(userData.id);
-
-    if (inVtc) {
-      await member.roles.add(VTC_MEMBER_ROLE);
-      await member.roles.remove(WITHOUT_VTC_ROLE).catch(() => {});
-    } else {
-      await member.roles.add(WITHOUT_VTC_ROLE);
-      await member.roles.remove(VTC_MEMBER_ROLE).catch(() => {});
-    }
-
-    // Styled response
-    res.send(`
-      <html>
-        <body style="background:#2c2f33;color:white;text-align:center;padding:50px;">
-          <h2>${inVtc ? "✅ Verification Complete" : "ℹ️ Verification Complete"}</h2>
-          <p>User: <strong>${userData.username}#${userData.discriminator}</strong></p>
-          <p>Status: ${inVtc ? "🎉 You are in the VTC!" : "❌ You are NOT in the VTC."}</p>
-          <br>
-          <a href="${SERVER_INVITE}" style="display:inline-block;background:#5865F2;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
-            Back to Discord Server
-          </a>
-        </body>
-      </html>
-    `);
-  } catch (err) {
-    console.error(err);
-    res.send(`
-      <html><body style="background:#2c2f33;color:white;text-align:center;padding:50px;">
-        <h2>❌ Error</h2>
-        <p>${err.message}</p>
-      </body></html>
-    `);
-  }
-});
-
-// ====== MANUAL FORM (still here for testing) ======
+// Homepage (simple form)
 app.get("/", (req, res) => {
   res.send(`
-    <h2>Manual Link (Testing)</h2>
+    <h2>TruckersMP VTC Role Bot</h2>
     <form method="POST" action="/link">
       <label>Discord ID: <input name="discordId" required></label><br><br>
       <label>TruckersMP ID: <input name="tmpId" required></label><br><br>
@@ -208,30 +47,45 @@ app.get("/", (req, res) => {
   `);
 });
 
+// Link handler
 app.post("/link", async (req, res) => {
   const discordId = req.body.discordId.trim();
   const tmpId = Number(req.body.tmpId.trim());
 
   try {
-    const response = await fetch(`https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`);
-    const data = await response.json();
-    const members = data.response?.members || [];
+    const url = `https://api.truckersmp.com/v2/vtc/${VTC_ID}/members`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`TruckersMP API error: ${response.status} ${response.statusText}`);
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      const text = await response.text();
+      throw new Error(`Invalid JSON from TMP API. First part: ${text.slice(0, 200)}`);
+    }
+
+    const members = data?.response?.members || [];
     const inVtc = members.some(m => Number(m.user_id) === tmpId);
 
+    // Fetch Discord user
     const guild = await client.guilds.fetch(GUILD_ID);
     const member = await guild.members.fetch(discordId);
 
     if (inVtc) {
       await member.roles.add(VTC_MEMBER_ROLE);
       await member.roles.remove(WITHOUT_VTC_ROLE).catch(() => {});
-      res.send(`✅ ${member.user.tag} is in the VTC → VTC Member role added.`);
+      res.send(`✅ ${member.user.tag} is in VTC ${VTC_ID} → VTC Member role added.`);
     } else {
       await member.roles.add(WITHOUT_VTC_ROLE);
       await member.roles.remove(VTC_MEMBER_ROLE).catch(() => {});
-      res.send(`ℹ️ ${member.user.tag} is NOT in VTC ${VTC_ID} → Without VTC Members role added.`);
+      res.send(`ℹ️ ${member.user.tag} is NOT in VTC ${VTC_ID} → Without VTC role added.`);
     }
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error:", err.message);
     res.send("❌ Error: " + err.message);
   }
 });
